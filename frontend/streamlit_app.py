@@ -6,7 +6,7 @@ import plotly.io as pio
 import os
 
 # --- Configuration ---
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = "https://ai-data-analyst-api-739z.onrender.com"
 
 # Ollama model tags (ollama.com/library); pull with e.g. `ollama pull deepseek-v3.1:671b-cloud`
 OLLAMA_MODEL_OPTIONS = [
