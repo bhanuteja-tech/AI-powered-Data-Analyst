@@ -1,0 +1,35 @@
+# Backend
+fastapi==0.110.0
+uvicorn==0.27.1
+# 2.10+ pulls pydantic-core wheels for Python 3.13 (avoids Rust build blocked by some Windows policies)
+pydantic>=2.10.0,<3
+python-multipart==0.0.9
+
+# AI & Agents (0.3.x / 0.2.x: compatible with numpy 2.x + Python 3.13 wheels)
+langchain>=0.3.0,<0.4
+langchain-openai>=0.2.0,<0.4
+langgraph>=0.2.0,<0.3
+langchain-core>=0.3.0,<0.4
+
+# Data Analysis & Execution (numpy/pandas pins: wheels for Python 3.13 on Windows)
+numpy>=2.1.0,<3
+pandas>=2.2.3,<3
+# 3.9+ has pre-built wheels for Python 3.13 on Windows
+matplotlib>=3.9.0,<4
+seaborn==0.13.2
+plotly==5.19.0
+tabulate==0.9.0
+statsmodels
+scikit-learn>=1.5.0,<2
+
+# Frontend
+# 1.40+ supports numpy 2.x (required for Python 3.13 binary wheels)
+streamlit>=1.40.0,<2
+requests==2.31.0
+
+# Enhanced Data Processing
+scipy>=1.13.0,<2
+chardet>=5.0.0,<6
+
+# Misc
+python-dotenv==1.0.1
