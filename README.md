@@ -1,3 +1,6 @@
+
+# 🚀 Live Demo  
+👉 **[Check out the deployed app here!](https://bhanuteja-tech-ai-powered-data-ana-frontendstreamlit-app-7tbevt.streamlit.app/)**  
 # AI Data Analyst Agent
 
 A production-ready AI agent system that allows users to upload datasets and ask natural language questions. The system analyzes data, generates Python code, executes it safely, and returns results with visualizations and business insights.
