@@ -169,14 +169,16 @@ with st.sidebar:
         api_key = st.text_input("OpenAI API Key (optional if in .env)", type="password")
     elif llm_provider == "openrouter":
         llm_model = st.selectbox("Model Name", [
-            "anthropic/claude-3-haiku",
-            "anthropic/claude-3-sonnet",
-            "anthropic/claude-3-opus",
-            "meta-llama/llama-3-70b-instruct",
-            "meta-llama/llama-3-8b-instruct",
-            "google/gemini-pro-1.5",
-            "mistralai/mixtral-8x7b-instruct",
-            "qwen/qwen-2.5-coder-32b-instruct"
+            "anthropic/claude-haiku-4.5",
+            "anthropic/claude-sonnet-4.6",
+            "anthropic/claude-opus-4.5",
+            "meta-llama/llama-3.1-70b-instruct",
+            "meta-llama/llama-3.1-8b-instruct",
+            "google/gemini-2.0-flash-exp",
+            "mistralai/mistral-large-2512",
+            "qwen/qwen-2.5-coder-32b-instruct",
+            "deepseek/deepseek-chat",
+            "openai/gpt-4o-mini"
         ])
         api_key = st.text_input("OpenRouter API Key", type="password")
     else: # ollama

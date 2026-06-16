@@ -22,9 +22,10 @@ def get_llm(state: AgentState):
             temperature=0
         )
     elif provider == "ollama":
-        # Ollama local instance
+        # Ollama instance - configurable base URL for production support
+        ollama_base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
         return ChatOpenAI(
-            base_url="http://localhost:11434/v1",
+            base_url=ollama_base_url,
             api_key="ollama", # required but dummy
             model=model,
             temperature=0
@@ -227,7 +228,12 @@ Wait, here are the RULES:
    - You MUST print the statistical results using `print()`. 
    - For distributions, print skewness (`df.skew()`), kurtosis, or descriptive stats so the next parsing step can read it.
    - Do NOT just generate a plot if they ask for statistical text properties.
-5. Return ONLY Python code inside ```python ``` blocks. Do not add explanations.
+5. CRITICAL: For correlation analysis or any numeric operations:
+   - ALWAYS filter to numeric columns first using: `numeric_df = df.select_dtypes(include=[np.number])`
+   - Then calculate correlations on `numeric_df` only, NOT on the original `df`
+   - This prevents errors when categorical columns (like 'S', 'C', 'Q') are present
+   - Example: `correlation_matrix = numeric_df.corr()` instead of `df.corr()`
+6. Return ONLY Python code inside ```python ``` blocks. Do not add explanations.
 """
 
     user_content = f"DATASET INFO:\n{state['dataset_info']}\n\nUSER QUERY: {state['query']}\n\nNEEDS VISUALIZATION: {state['needs_visualization']}"
