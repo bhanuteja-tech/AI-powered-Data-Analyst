@@ -470,7 +470,7 @@ for message in st.session_state.messages:
         # Display static matplotlib/seaborn image fallback
         elif "figure" in message and message["figure"]:
             img_data = message["figure"].split(",")[1]
-            st.image(base64.b64decode(img_data), use_column_width=True)
+            st.image(base64.b64decode(img_data), width="stretch")
             
         # Display code snippet and dataset info in columns
         row1_col1, row1_col2 = st.columns(2)
@@ -532,24 +532,25 @@ if prompt := st.chat_input(prompt_placeholder):
                             "api_key": api_key,
                             "chat_history": chat_history_payload,
                         }
-                        response = requests.post(
-                            f"{API_BASE_URL}/chat-stream",
-                            json=payload,
-                            stream=True,
-                        )
-                        if response.status_code != 200:
-                            err_msg = f"API Error (stream): {response.text}"
-                            st.error(err_msg)
-                            st.session_state.messages.append({"role": "assistant", "content": err_msg})
-                        else:
-                            placeholder = st.empty()
-                            full_text = ""
-                            for chunk in response.iter_content(chunk_size=1024):
-                                if not chunk:
-                                    continue
-                                text = chunk.decode("utf-8", errors="ignore")
-                                full_text += text
-                                placeholder.markdown(full_text)
+                        try:
+                            response = requests.post(
+                                f"{API_BASE_URL}/chat-stream",
+                                json=payload,
+                                stream=True,
+                                timeout=60
+                            )
+                            if response.status_code != 200:
+                                err_msg = f"API Error (stream): {response.text}"
+                                st.error(err_msg)
+                                st.session_state.messages.append({"role": "assistant", "content": err_msg})
+                            else:
+                                placeholder = st.empty()
+                                full_text = ""
+                                for chunk in response.iter_content(chunk_size=1, decode_unicode=True):
+                                    if chunk:
+                                        full_text += chunk
+                                        placeholder.markdown(full_text)
+                                        time.sleep(0.01)  # Small delay for visual streaming effect
 
                             # Save streamed response to history (treat as plain chat, no separate 'insights')
                             st.session_state.messages.append({
@@ -560,6 +561,10 @@ if prompt := st.chat_input(prompt_placeholder):
                                 "figure": None,
                                 "plotly_figure": None
                             })
+                        except Exception as e:
+                            err_msg = f"Streaming error: {e}"
+                            st.error(err_msg)
+                            st.session_state.messages.append({"role": "assistant", "content": err_msg})
                     else:
                         # Analysis mode (code + charts), non-streaming but with insight typing effect
                         payload = {
@@ -605,7 +610,7 @@ if prompt := st.chat_input(prompt_placeholder):
                             # Fallback to static matplotlib
                             elif figure:
                                 img_data = figure.split(",")[1]
-                                st.image(base64.b64decode(img_data), use_column_width=True)
+                                st.image(base64.b64decode(img_data), width="stretch")
 
                             gen_code = data.get("code", "")
                             dataset_info = data.get("dataset_info_snippet", "")
