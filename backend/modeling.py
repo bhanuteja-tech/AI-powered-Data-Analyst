@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 import pandas as pd
 
-from backend.data_cleaning import clean_dataset
+from backend.pipelines.legacy.data_cleaning import clean_dataset
 
 
 def create_model_ready_dataset(df: pd.DataFrame) -> Dict[str, Any]:

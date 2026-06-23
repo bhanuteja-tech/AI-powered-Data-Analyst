@@ -6,6 +6,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+# Load .env from project root
+from dotenv import load_dotenv
+load_dotenv(_PROJECT_ROOT / ".env")
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +18,7 @@ import os
 import shutil
 import uuid
 import pandas as pd
+import requests as http_requests  # renamed to avoid conflict with FastAPI Request
 from backend.agents.workflow import app as agent_workflow, get_llm
 from backend.pipelines.legacy.preprocess import preprocess_dataset
 from backend.pipelines.core.enhanced_preprocess import preprocess_dataset_enhanced
@@ -41,6 +46,7 @@ class QueryRequest(BaseModel):
     api_key: str = ""
     chat_history: list[dict] = []
     chat_mode: str = "analysis"
+    ollama_base_url: str = ""
 
 
 class StreamQueryRequest(BaseModel):
@@ -50,6 +56,7 @@ class StreamQueryRequest(BaseModel):
     model_name: str = "gpt-4o-mini"
     api_key: str = ""
     chat_history: list[dict] = []
+    ollama_base_url: str = ""
 
 
 class EnhancedUploadRequest(BaseModel):
@@ -249,7 +256,8 @@ async def ask_question(request: QueryRequest):
         "model_name": request.model_name,
         "api_key": request.api_key,
         "chat_history": request.chat_history,
-        "chat_mode": request.chat_mode
+        "chat_mode": request.chat_mode,
+        "ollama_base_url": request.ollama_base_url,
     }
     
     try:
@@ -327,6 +335,7 @@ def chat_stream(request: StreamQueryRequest):
         "provider": request.provider,
         "model_name": request.model_name,
         "api_key": request.api_key,
+        "ollama_base_url": request.ollama_base_url,
     }
     llm = get_llm(state)  # uses ChatOpenAI under the hood
 
@@ -359,3 +368,27 @@ def chat_stream(request: StreamQueryRequest):
                 yield text
 
     return StreamingResponse(token_generator(), media_type="text/plain")
+
+
+@app.get("/ollama-status")
+async def ollama_status(base_url: str = ""):
+    """
+    Check if an Ollama instance is reachable.
+    Returns the list of available models or an error message.
+    """
+    url = base_url or os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    # Strip /v1 suffix to hit Ollama's native /api/tags endpoint
+    native_url = url.rstrip("/")
+    if native_url.endswith("/v1"):
+        native_url = native_url[:-3]
+
+    try:
+        resp = http_requests.get(f"{native_url}/api/tags", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            models = [m.get("name", "unknown") for m in data.get("models", [])]
+            return {"status": "connected", "models": models, "url": native_url}
+        else:
+            return {"status": "error", "detail": f"HTTP {resp.status_code}"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}

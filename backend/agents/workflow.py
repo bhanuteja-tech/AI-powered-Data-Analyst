@@ -1,4 +1,11 @@
 import os
+from pathlib import Path
+
+# Load .env from project root (two levels up from this file)
+from dotenv import load_dotenv
+_ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(_ENV_PATH)
+
 import pandas as pd
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -22,11 +29,15 @@ def get_llm(state: AgentState):
             temperature=0
         )
     elif provider == "ollama":
-        # Ollama instance - configurable base URL for production support
-        ollama_base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+        # Ollama instance - prefer URL from frontend (state), fallback to env var
+        ollama_base_url = (
+            state.get("ollama_base_url")
+            or os.environ.get("OLLAMA_BASE_URL")
+            or "http://localhost:11434/v1"
+        )
         return ChatOpenAI(
             base_url=ollama_base_url,
-            api_key="ollama", # required but dummy
+            api_key="ollama",  # required by ChatOpenAI but unused by Ollama
             model=model,
             temperature=0
         )
@@ -209,14 +220,18 @@ def request_clarification_node(state: AgentState) -> AgentState:
 def generate_code_node(state: AgentState) -> AgentState:
     """Generates the pandas/matplotlib/plotly code based on query and dataset info."""
     llm = get_llm(state)
-    sys_prompt = """You are an expert Python data analyst. 
+    sys_prompt = """You are an expert Python data analyst.
 You are given the structure of a pandas dataframe `df`.
 Your task is to write valid Python code to answer the user's query.
 The dataset is ALREADY loaded in the variable `df`.
 
-Wait, here are the RULES:
+IMPORTANT — TWO VARIABLES ARE PRE-LOADED:
+  • `df`         — the FULL DataFrame (all columns including categorical/text).
+  • `numeric_df` — a view containing ONLY the numeric columns of `df`.
+
+RULES:
 1. ONLY use pandas, numpy, matplotlib.pyplot as plt, seaborn as sns, and plotly.express as px.
-2. DO NOT load the dataset. The variable `df` is already available.
+2. DO NOT load the dataset. `df` and `numeric_df` are already available.
 3. If the user asks for a visualization:
    - If using Plotly (`px`), assign the final Figure to `plotly_fig`. DO NOT call `show()`. MUST ALWAYS use `.reset_index()` on grouped DataFrames beforehand so columns map correctly!
    - If using matplotlib/seaborn, just create the plot. DO NOT call `show()`.
@@ -224,18 +239,18 @@ Wait, here are the RULES:
    - For scatter plots: you MUST print correlation (Pearson) and a small grouped summary if a categorical hue is used.
    - For bar/line charts: you MUST print the aggregated table you plotted.
    - For hist/box/violin: you MUST print describe() + skew() for the plotted numeric column(s).
-4. If the user asks a factual question, or asks for data distribution/statistics (e.g., "what is the distribution?", "is it skewed?"):
-   - You MUST print the statistical results using `print()`. 
-   - For distributions, print skewness (`df.skew()`), kurtosis, or descriptive stats so the next parsing step can read it.
+4. If the user asks a factual question, or asks for data distribution/statistics:
+   - You MUST print the statistical results using `print()`.
+   - For distributions, print skewness (`df.skew(numeric_only=True)`), kurtosis, or descriptive stats.
    - Do NOT just generate a plot if they ask for statistical text properties.
-5. CRITICAL: For correlation analysis or any numeric operations:
-   - ALWAYS use the pre-filtered `numeric_df` variable (already available in your environment)
-   - NEVER call `.corr()` or other numeric operations on the original `df` 
-   - The `numeric_df` variable contains only numeric columns and is pre-filtered for you
-   - Example: `correlation_matrix = numeric_df.corr()` instead of `df.corr()`
-   - This prevents errors when categorical columns (like 'S', 'C', 'Q') are present
-   - For heatmaps, always use: `sns.heatmap(numeric_df.corr(), annot=True)`
-6. Return ONLY Python code inside ```python ``` blocks. Do not add explanations.
+5. **CRITICAL — CORRELATION / NUMERIC-ONLY OPERATIONS:**
+   - ALWAYS use `numeric_df` for `.corr()`, `.cov()`, heatmaps, or any operation that requires all-numeric data.
+   - NEVER call `df.corr()` — use `numeric_df.corr()` instead.
+   - For heatmaps: `sns.heatmap(numeric_df.corr(), annot=True, fmt='.2f', cmap='coolwarm')`
+   - For pairplots: `sns.pairplot(numeric_df)`
+   - This prevents "could not convert string to float" errors from categorical columns.
+6. For groupby / filtering / scatter with hue — use the full `df` which has all columns.
+7. Return ONLY Python code inside ```python ``` blocks. Do not add explanations.
 """
 
     user_content = f"DATASET INFO:\n{state['dataset_info']}\n\nUSER QUERY: {state['query']}\n\nNEEDS VISUALIZATION: {state['needs_visualization']}"

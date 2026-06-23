@@ -6,7 +6,9 @@ import plotly.io as pio
 import os
 
 # --- Configuration ---
-API_BASE_URL = "https://ai-data-analyst-api-739z.onrender.com"
+# For local development point at the local FastAPI backend;
+# for production set the API_BASE_URL environment variable.
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
 # Ollama model tags (ollama.com/library); pull with e.g. `ollama pull deepseek-v3.1:671b-cloud`
 OLLAMA_MODEL_OPTIONS = [
@@ -189,10 +191,41 @@ with st.sidebar:
             help="Cloud tags need `ollama pull <model>` and an Ollama account where applicable.",
         )
         api_key = ""  # Not needed
+        ollama_base_url = st.text_input(
+            "Ollama Base URL",
+            value=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+            help="Change this if Ollama runs on a different host/port (e.g. Docker, remote server).",
+        )
         st.info(
             "Run Ollama locally on port **11434** (default). "
-            "Pull a model first, e.g. `ollama pull deepseek-v3.1:671b-cloud`."
+            "Pull a model first, e.g. `ollama pull llama3.2:3b`."
         )
+        # Connectivity check
+        if st.button("🔌 Check Ollama Connection"):
+            try:
+                check_res = requests.get(
+                    f"{API_BASE_URL}/ollama-status",
+                    params={"base_url": ollama_base_url},
+                    timeout=10,
+                )
+                if check_res.status_code == 200:
+                    data = check_res.json()
+                    if data.get("status") == "connected":
+                        models = data.get("models", [])
+                        st.success(
+                            f"✅ Connected to Ollama at `{data.get('url')}`\n\n"
+                            f"**Available models:** {', '.join(models) if models else 'None pulled yet'}"
+                        )
+                    else:
+                        st.error(f"❌ Ollama not reachable: {data.get('detail', 'Unknown error')}")
+                else:
+                    st.error(f"❌ Backend error: HTTP {check_res.status_code}")
+            except Exception as e:
+                st.error(f"❌ Cannot reach backend API: {e}")
+
+    # Store ollama_base_url for use in payloads (empty string for non-ollama providers)
+    if llm_provider != "ollama":
+        ollama_base_url = ""
 
     st.markdown("---")
     st.markdown("### 📁 Data Source")
@@ -296,7 +329,8 @@ with st.sidebar:
                                 "query": "", # Empty query triggers suggestion generation
                                 "provider": llm_provider,
                                 "model_name": llm_model,
-                                "api_key": api_key
+                                "api_key": api_key,
+                                "ollama_base_url": ollama_base_url,
                             }
                             sugg_res = requests.post(f"{API_BASE_URL}/ask", json=prompt_payload)
                             if sugg_res.status_code == 200:
@@ -531,6 +565,7 @@ if prompt := st.chat_input(prompt_placeholder):
                             "model_name": llm_model,
                             "api_key": api_key,
                             "chat_history": chat_history_payload,
+                            "ollama_base_url": ollama_base_url,
                         }
                         try:
                             response = requests.post(
@@ -574,7 +609,8 @@ if prompt := st.chat_input(prompt_placeholder):
                             "model_name": llm_model,
                             "api_key": api_key,
                             "chat_history": chat_history_payload,
-                            "chat_mode": chat_mode
+                            "chat_mode": chat_mode,
+                            "ollama_base_url": ollama_base_url,
                         }
                         start_time = time.time()
                         res = requests.post(f"{API_BASE_URL}/ask", json=payload)

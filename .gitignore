@@ -8,3 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Environment variables (contains API keys)
+.env
+
+# User-uploaded datasets (UUID-named files)
+datasets/*_original.*
+datasets/*_cleaned.*

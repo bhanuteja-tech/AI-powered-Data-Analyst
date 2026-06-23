@@ -10,6 +10,7 @@ class AgentState(TypedDict):
     provider: str
     model_name: str
     api_key: str
+    ollama_base_url: str
     
     # Populated by Data Inspection Agent
     dataset_info: str
