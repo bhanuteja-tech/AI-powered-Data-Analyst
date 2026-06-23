@@ -229,10 +229,12 @@ Wait, here are the RULES:
    - For distributions, print skewness (`df.skew()`), kurtosis, or descriptive stats so the next parsing step can read it.
    - Do NOT just generate a plot if they ask for statistical text properties.
 5. CRITICAL: For correlation analysis or any numeric operations:
-   - ALWAYS filter to numeric columns first using: `numeric_df = df.select_dtypes(include=[np.number])`
-   - Then calculate correlations on `numeric_df` only, NOT on the original `df`
-   - This prevents errors when categorical columns (like 'S', 'C', 'Q') are present
+   - ALWAYS use the pre-filtered `numeric_df` variable (already available in your environment)
+   - NEVER call `.corr()` or other numeric operations on the original `df` 
+   - The `numeric_df` variable contains only numeric columns and is pre-filtered for you
    - Example: `correlation_matrix = numeric_df.corr()` instead of `df.corr()`
+   - This prevents errors when categorical columns (like 'S', 'C', 'Q') are present
+   - For heatmaps, always use: `sns.heatmap(numeric_df.corr(), annot=True)`
 6. Return ONLY Python code inside ```python ``` blocks. Do not add explanations.
 """
 
@@ -289,9 +291,10 @@ def execute_code_node(state: AgentState) -> AgentState:
         else:
             df = pd.read_csv(dataset_path)
         code = state["generated_code"]
+        query = state.get("query", "")
         
-        # Execute using our engine
-        result = execution_engine.execute_code(code, df)
+        # Execute using our engine with query context for correlation detection
+        result = execution_engine.execute_code(code, df, query)
         state["execution_result"] = result
         
     except Exception as e:
