@@ -35,6 +35,26 @@ def get_llm(state: AgentState):
             or os.environ.get("OLLAMA_BASE_URL")
             or "http://localhost:11434/v1"
         )
+
+        # Quick reachability check — fail fast with a helpful message
+        import requests as _requests
+        _check_url = ollama_base_url.rstrip("/")
+        if _check_url.endswith("/v1"):
+            _check_url = _check_url[:-3]
+        try:
+            # ngrok free tier requires this header to skip the browser interstitial page
+            _headers = {"ngrok-skip-browser-warning": "true"}
+            _resp = _requests.get(f"{_check_url}/api/tags", timeout=5, headers=_headers)
+            if _resp.status_code != 200:
+                raise ConnectionError(f"Ollama returned HTTP {_resp.status_code}")
+        except Exception as _e:
+            raise RuntimeError(
+                f"Cannot reach Ollama at {ollama_base_url} ({_e}). "
+                "Ollama requires a running local server which is not available on cloud platforms like Render. "
+                "Please switch the provider to 'openrouter' in the sidebar — it supports the same "
+                "open-source models (Llama, DeepSeek, Qwen, Mistral, etc.) via API."
+            ) from _e
+
         return ChatOpenAI(
             base_url=ollama_base_url,
             api_key="ollama",  # required by ChatOpenAI but unused by Ollama

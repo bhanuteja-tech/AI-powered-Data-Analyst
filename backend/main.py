@@ -383,7 +383,9 @@ async def ollama_status(base_url: str = ""):
         native_url = native_url[:-3]
 
     try:
-        resp = http_requests.get(f"{native_url}/api/tags", timeout=5)
+        # ngrok free tier requires this header to skip the browser interstitial page
+        headers = {"ngrok-skip-browser-warning": "true"}
+        resp = http_requests.get(f"{native_url}/api/tags", timeout=5, headers=headers)
         if resp.status_code == 200:
             data = resp.json()
             models = [m.get("name", "unknown") for m in data.get("models", [])]

@@ -7,8 +7,56 @@ import os
 
 # --- Configuration ---
 # For local development point at the local FastAPI backend;
-# for production set the API_BASE_URL environment variable.
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
+# for production set API_BASE_URL in Streamlit Cloud Secrets or as an env var.
+def _get_config(key: str, default: str = "") -> str:
+    """Read from Streamlit secrets first, then env vars, then default."""
+    try:
+        return st.secrets[key]
+    except (KeyError, FileNotFoundError):
+        return os.environ.get(key, default)
+
+API_BASE_URL = _get_config("API_BASE_URL", "http://localhost:8000")
+
+# --- Production Detection ---
+def _is_production() -> bool:
+    """Detect if the app is running against a cloud backend (not localhost)."""
+    url = API_BASE_URL.lower()
+    return "localhost" not in url and "127.0.0.1" not in url
+
+IS_PRODUCTION = _is_production()
+
+# Mapping: Ollama model tag -> closest OpenRouter equivalent
+OLLAMA_TO_OPENROUTER = {
+    "deepseek-r1:8b": "deepseek/deepseek-chat",
+    "deepseek-r1:14b": "deepseek/deepseek-chat",
+    "deepseek-r1:32b": "deepseek/deepseek-chat",
+    "deepseek-r1:70b": "deepseek/deepseek-chat",
+    "deepseek-coder-v2:16b": "deepseek/deepseek-chat",
+    "llama3.3:70b": "meta-llama/llama-3.1-70b-instruct",
+    "llama3.2:3b": "meta-llama/llama-3.1-8b-instruct",
+    "llama3.2:1b": "meta-llama/llama-3.1-8b-instruct",
+    "llama3.1:8b": "meta-llama/llama-3.1-8b-instruct",
+    "llama3.1:70b": "meta-llama/llama-3.1-70b-instruct",
+    "llama3:8b": "meta-llama/llama-3.1-8b-instruct",
+    "llama3:70b": "meta-llama/llama-3.1-70b-instruct",
+    "llama3": "meta-llama/llama-3.1-8b-instruct",
+    "qwen2.5:7b": "qwen/qwen-2.5-coder-32b-instruct",
+    "qwen2.5:14b": "qwen/qwen-2.5-coder-32b-instruct",
+    "qwen2.5:32b": "qwen/qwen-2.5-coder-32b-instruct",
+    "qwen2.5-coder:32b": "qwen/qwen-2.5-coder-32b-instruct",
+    "qwen2.5-coder:7b": "qwen/qwen-2.5-coder-32b-instruct",
+    "mistral": "mistralai/mistral-large-2512",
+    "mistral-nemo": "mistralai/mistral-large-2512",
+    "mixtral:8x7b": "mistralai/mistral-large-2512",
+    "mixtral:8x22b": "mistralai/mistral-large-2512",
+    "gemma2:9b": "google/gemini-2.0-flash-exp",
+    "gemma2:27b": "google/gemini-2.0-flash-exp",
+    "gemma:7b": "google/gemini-2.0-flash-exp",
+    "phi4": "microsoft/phi-4",
+    "phi3": "microsoft/phi-4",
+    "codellama:7b": "meta-llama/llama-3.1-8b-instruct",
+    "codellama:13b": "meta-llama/llama-3.1-8b-instruct",
+}
 
 # Ollama model tags (ollama.com/library); pull with e.g. `ollama pull deepseek-v3.1:671b-cloud`
 OLLAMA_MODEL_OPTIONS = [
@@ -164,7 +212,9 @@ if "messages" not in st.session_state:
 # --- Sidebar: User & Agent Config ---
 with st.sidebar:
     st.markdown("### ⚙️ Engine Settings")
-    llm_provider = st.selectbox("Provider", ["openai", "openrouter", "ollama"])
+    _provider_options = ["openai", "openrouter", "ollama"]
+    _default_provider_idx = 1 if IS_PRODUCTION else 0  # Default to OpenRouter in production
+    llm_provider = st.selectbox("Provider", _provider_options, index=_default_provider_idx)
     
     if llm_provider == "openai":
         llm_model = st.selectbox("Model Name", ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"])
@@ -184,6 +234,17 @@ with st.sidebar:
         ])
         api_key = st.text_input("OpenRouter API Key", type="password")
     else: # ollama
+        # --- Production warning for Ollama ---
+        if IS_PRODUCTION:
+            st.error(
+                "🚫 **Ollama is not available in cloud deployments.**\n\n"
+                "Ollama requires a locally running server with GPU/CPU resources, "
+                "which isn't possible on Render or Streamlit Cloud.\n\n"
+                "**Recommended:** Switch to **OpenRouter** above — it gives you "
+                "access to the same open-source models (Llama, DeepSeek, Qwen, "
+                "Mistral, Gemma, etc.) via API."
+            )
+
         llm_model = st.selectbox(
             "Model Name",
             OLLAMA_MODEL_OPTIONS,
@@ -191,25 +252,43 @@ with st.sidebar:
             help="Cloud tags need `ollama pull <model>` and an Ollama account where applicable.",
         )
         api_key = ""  # Not needed
+
+        # In production, offer a one-click switch to the equivalent OpenRouter model
+        if IS_PRODUCTION:
+            equivalent = OLLAMA_TO_OPENROUTER.get(llm_model)
+            if equivalent:
+                st.info(
+                    f"💡 **`{llm_model}`** is available on OpenRouter as **`{equivalent}`**.\n\n"
+                    "Switch the provider to **OpenRouter** above and select it from the model list."
+                )
+
         ollama_base_url = st.text_input(
             "🌐 Ollama Base URL",
-            value=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+            value=_get_config("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
             help="Change this if Ollama runs on a different host/port (e.g. Docker, remote server, or ngrok tunnel).",
             placeholder="https://your-ngrok-url.ngrok-free.app/v1",
         )
         # Warn users if they're still on localhost (won't work over the internet)
         if "localhost" in ollama_base_url or "127.0.0.1" in ollama_base_url:
-            st.warning(
-                "⚠️ **Using localhost** — this only works if Ollama is running on the same machine as this app. "
-                "For **remote access** (e.g. via ngrok), replace this URL with your ngrok tunnel URL, like:\n\n"
-                "`https://xxxx-xxxx.ngrok-free.app/v1`"
-            )
+            if IS_PRODUCTION:
+                st.error(
+                    "❌ **localhost won't work in production.** The backend runs on Render, "
+                    "not on your local machine. Please switch to **OpenRouter** or provide "
+                    "a remote Ollama URL (e.g. ngrok tunnel)."
+                )
+            else:
+                st.warning(
+                    "⚠️ **Using localhost** — this only works if Ollama is running on the same machine as this app. "
+                    "For **remote access** (e.g. via ngrok), replace this URL with your ngrok tunnel URL, like:\n\n"
+                    "`https://xxxx-xxxx.ngrok-free.app/v1`"
+                )
         else:
             st.success(f"🌐 Pointing to remote Ollama: `{ollama_base_url}`")
-        st.info(
-            "Pull a model first, e.g. `ollama pull llama3.2:3b`. "
-            "If using ngrok, run: `ngrok http 11434` on the machine hosting Ollama."
-        )
+        if not IS_PRODUCTION:
+            st.info(
+                "Pull a model first, e.g. `ollama pull llama3.2:3b`. "
+                "If using ngrok, run: `ngrok http 11434` on the machine hosting Ollama."
+            )
         # Connectivity check
         if st.button("🔌 Check Ollama Connection"):
             try:
