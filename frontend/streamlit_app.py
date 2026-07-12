@@ -192,13 +192,23 @@ with st.sidebar:
         )
         api_key = ""  # Not needed
         ollama_base_url = st.text_input(
-            "Ollama Base URL",
+            "🌐 Ollama Base URL",
             value=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
-            help="Change this if Ollama runs on a different host/port (e.g. Docker, remote server).",
+            help="Change this if Ollama runs on a different host/port (e.g. Docker, remote server, or ngrok tunnel).",
+            placeholder="https://your-ngrok-url.ngrok-free.app/v1",
         )
+        # Warn users if they're still on localhost (won't work over the internet)
+        if "localhost" in ollama_base_url or "127.0.0.1" in ollama_base_url:
+            st.warning(
+                "⚠️ **Using localhost** — this only works if Ollama is running on the same machine as this app. "
+                "For **remote access** (e.g. via ngrok), replace this URL with your ngrok tunnel URL, like:\n\n"
+                "`https://xxxx-xxxx.ngrok-free.app/v1`"
+            )
+        else:
+            st.success(f"🌐 Pointing to remote Ollama: `{ollama_base_url}`")
         st.info(
-            "Run Ollama locally on port **11434** (default). "
-            "Pull a model first, e.g. `ollama pull llama3.2:3b`."
+            "Pull a model first, e.g. `ollama pull llama3.2:3b`. "
+            "If using ngrok, run: `ngrok http 11434` on the machine hosting Ollama."
         )
         # Connectivity check
         if st.button("🔌 Check Ollama Connection"):
