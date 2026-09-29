@@ -92,6 +92,11 @@ class ExecutionEngine:
                         cleaned_code_lines.append(line)
                 cleaned_code = '\n'.join(cleaned_code_lines)
 
+                # FAIL-SAFE: Remove any .show() calls to prevent opening new tabs
+                cleaned_code = re.sub(r'\.show\(\)', '', cleaned_code)
+                cleaned_code = re.sub(r'plt\.show\(\)', '', cleaned_code)
+                cleaned_code = re.sub(r'fig\.show\(\)', '', cleaned_code)
+
                 # Inject numeric guards for .corr() / heatmap safety
                 cleaned_code = _inject_numeric_guard(cleaned_code)
 

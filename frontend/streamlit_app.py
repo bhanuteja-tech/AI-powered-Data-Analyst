@@ -551,7 +551,7 @@ st.markdown('<div class="main-title">AI Data Analyst</div>', unsafe_allow_html=T
 st.markdown('<div class="subtitle">Interact with your data using natural language, powered by dynamic code execution.</div>', unsafe_allow_html=True)
 
 # Display chat messages from history on app rerun
-for message in st.session_state.messages:
+for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         # Cleaning report: stream once in the main chat area
         if (
@@ -586,7 +586,7 @@ for message in st.session_state.messages:
         if "plotly_figure" in message and message["plotly_figure"]:
             try:
                 fig = pio.from_json(message["plotly_figure"])
-                st.plotly_chart(fig, width='stretch')
+                st.plotly_chart(fig, width='stretch', key=f"plotly_{idx}")
             except Exception as e:
                 st.error(f"Failed to render interactive chart: {e}")
 
@@ -729,7 +729,7 @@ if prompt := st.chat_input(prompt_placeholder):
                             if plotly_fig:
                                 try:
                                     fig = pio.from_json(plotly_fig)
-                                    st.plotly_chart(fig, width='stretch')   
+                                    st.plotly_chart(fig, width='stretch', key=f"plotly_new_{len(st.session_state.messages)}")   
                                 except Exception as e:
                                     st.error(f"Failed to render interactive chart: {e}")
                             # Fallback to static matplotlib

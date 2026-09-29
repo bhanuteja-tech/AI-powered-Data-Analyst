@@ -194,9 +194,11 @@ def understand_query_node(state: AgentState) -> AgentState:
 Determine the user's INTENT based on the current prompt and the chat history.
 
 OPTIONS:
-1. "VISUALIZATION": User explicitly asks for a graph, plot, chart, or trend analysis that requires coding a visual.
-2. "DATA_ONLY": User asks a quantitative question requiring pandas code to calculate (e.g., max, min, average, sum) but no chart.
-3. "OFF_TOPIC": User asks for something not related to analyzing the dataset (e.g., "give me Fibonacci code", general programming help, generic chat, writing emails, etc.). This should NOT run code on the dataset.
+1. "VISUALIZATION": User explicitly asks for a graph, plot, chart, heatmap, scatter, bar, line, histogram, box plot, or any data visualization. This includes requests like "plot", "chart", "graph", "show me", "compare", "visualize", "display", etc. when referring to data.
+2. "DATA_ONLY": User asks a quantitative question requiring pandas code to calculate (e.g., max, min, average, sum, count, correlation) but no chart.
+3. "OFF_TOPIC": User asks for something completely unrelated to data analysis (e.g., "write a poem", "what's the weather", general programming help, writing emails, etc.). This should NOT run code on the dataset.
+
+IMPORTANT: Be generous in classifying as VISUALIZATION or DATA_ONLY. If the user mentions data, columns, statistics, or comparisons related to the dataset, it is NOT off-topic.
 
 {chat_context}
 
@@ -253,8 +255,8 @@ RULES:
 1. ONLY use pandas, numpy, matplotlib.pyplot as plt, seaborn as sns, and plotly.express as px.
 2. DO NOT load the dataset. `df` and `numeric_df` are already available.
 3. If the user asks for a visualization:
-   - If using Plotly (`px`), assign the final Figure to `plotly_fig`. DO NOT call `show()`. MUST ALWAYS use `.reset_index()` on grouped DataFrames beforehand so columns map correctly!
-   - If using matplotlib/seaborn, just create the plot. DO NOT call `show()`.
+   - If using Plotly (`px`), assign the final Figure to `plotly_fig`. NEVER call `show()` - this opens a new tab. MUST ALWAYS use `.reset_index()` on grouped DataFrames beforehand so columns map correctly!
+   - If using matplotlib/seaborn, just create the plot. NEVER call `show()`.
    - You MUST ALSO use `print()` to output a statistical summary that describes the graph so the insight generator can understand it.
    - For scatter plots: you MUST print correlation (Pearson) and a small grouped summary if a categorical hue is used.
    - For bar/line charts: you MUST print the aggregated table you plotted.
@@ -266,7 +268,10 @@ RULES:
 5. **CRITICAL — CORRELATION / NUMERIC-ONLY OPERATIONS:**
    - ALWAYS use `numeric_df` for `.corr()`, `.cov()`, heatmaps, or any operation that requires all-numeric data.
    - NEVER call `df.corr()` — use `numeric_df.corr()` instead.
-   - For heatmaps: `sns.heatmap(numeric_df.corr(), annot=True, fmt='.2f', cmap='coolwarm')`
+   - For seaborn heatmaps: `sns.heatmap(numeric_df.corr(), annot=True, fmt='.2f', cmap='coolwarm')`
+   - For Plotly heatmaps: `plotly_fig = px.imshow(numeric_df.corr(), text_auto=True, color_continuous_scale='RdBu_r', aspect='auto')`
+     - IMPORTANT: Use `color_continuous_scale`, NOT `colorscale` or `cmap`
+     - Valid values: 'RdBu_r', 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Blues', 'Reds', etc.
    - For pairplots: `sns.pairplot(numeric_df)`
    - This prevents "could not convert string to float" errors from categorical columns.
 6. For groupby / filtering / scatter with hue — use the full `df` which has all columns.

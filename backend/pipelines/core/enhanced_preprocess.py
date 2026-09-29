@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 warnings.filterwarnings('ignore', category=FutureWarning)
 
 # Enhanced patterns for better detection
-_TARGET_NAMES = {"target", "label", "output", "y", "class", "result", "outcome"}
+# Note: "class" is excluded as it's commonly a feature column (e.g., passenger class, product class)
+_TARGET_NAMES = {"target", "label", "output", "y", "result", "outcome"}
 _ENHANCED_ID_PATTERNS = [
     re.compile(r"\bid\b", re.IGNORECASE),
     re.compile(r"user[_\s]*id", re.IGNORECASE),
@@ -93,15 +94,17 @@ class EnhancedPreprocessor:
 
     def _detect_target_column_enhanced(self, df: pd.DataFrame) -> Optional[str]:
         """Enhanced target column detection with multiple strategies."""
-        # 1. Direct name matching
+        # 1. Direct name matching - but be more conservative with "class" 
+        # since it's commonly a feature column (e.g., passenger class)
+        conservative_targets = {"target", "label", "output", "y", "result", "outcome"}
         for col in df.columns:
-            if col and str(col).strip().lower() in _TARGET_NAMES:
+            if col and str(col).strip().lower() in conservative_targets:
                 return col
         
-        # 2. Pattern matching
+        # 2. Pattern matching - exclude "class" as it's often a feature
         for col in df.columns:
             if col and any(pattern.search(str(col).lower()) for pattern in [
-                re.compile(r"target|label|output|y$|class|result|outcome")
+                re.compile(r"target|label|output|y$|result|outcome")
             ]):
                 return col
         
