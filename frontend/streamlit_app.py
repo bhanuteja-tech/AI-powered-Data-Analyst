@@ -82,6 +82,7 @@ OLLAMA_MODEL_OPTIONS = [
     "llama3:70b",
     "llama3",
     # Qwen
+    "qwen2.5-coder:3b",
     "qwen2.5:7b",
     "qwen2.5:14b",
     "qwen2.5:32b",
@@ -192,11 +193,26 @@ st.markdown("""
         border-radius: 8px;
         border: 1px solid #4A5568;
     }
-    .stSelectbox>div>div>div {
-        background-color: #2D3748;
-        color: white;
+    /* Plotly and Image Sizing Container */
+    .stPlotlyChart {
+        width: 100% !important;
+        min-height: 520px !important;
+        margin-top: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+    .stPlotlyChart > div {
+        width: 100% !important;
+    }
+    /* Matplotlib / Seaborn Static Charts */
+    [data-testid="stImage"] img {
+        max-height: 520px !important;
+        width: auto !important;
+        max-width: 100% !important;
+        display: block;
+        margin-left: auto;
+        margin-right: auto;
         border-radius: 8px;
-        border: 1px solid #4A5568;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -338,7 +354,7 @@ with st.sidebar:
     file_bytes = None
     
     if data_source_opt == "Upload CSV/Excel":
-        uploaded_file = st.file_uploader("Upload CSV/Excel", type=["csv", "xlsx"])
+        uploaded_file = st.file_uploader("Upload CSV/Excel", type=["csv", "xlsx", "xls", "json", "jsonl", "parquet", "tsv", "txt"])
         if uploaded_file is not None:
             file_name = uploaded_file.name
             file_bytes = uploaded_file.getvalue()
@@ -424,10 +440,14 @@ with st.sidebar:
                             sugg_res = requests.post(f"{API_BASE_URL}/ask", json=prompt_payload)
                             if sugg_res.status_code == 200:
                                 suggestions = sugg_res.json().get("suggested_questions", [])
-                                if suggestions:
-                                    sugg_text = "**Here are some questions you can ask about this dataset:**\n\n"
-                                    for s in suggestions:
-                                        sugg_text += f"- {s}\n"
+                                clean_suggs = [
+                                    s.strip() for s in suggestions
+                                    if s and len(s) > 8 and not any(bp in s.lower() for bp in ["dataset you've", "key features", "breakdown of", "type of dwelling", "unique identifier"])
+                                ]
+                                if clean_suggs:
+                                    sugg_text = "💡 **Here are some questions you can ask about this dataset:**\n\n"
+                                    for s in clean_suggs:
+                                        sugg_text += f"- 🔹 `{s}`\n"
                                     
                                     st.session_state.messages.append({
                                         "role": "assistant",
@@ -580,20 +600,47 @@ for idx, message in enumerate(st.session_state.messages):
             
         # Display the insight text if it's an assistant message
         if "insights" in message and message["insights"]:
-            st.info(f"✨ **Key Insight:** \n{message['insights']}")
+            ins = message["insights"]
+            is_clarification = (
+                message.get("intent") == "CLARIFICATION" 
+                or message.get("needs_clarification") 
+                or "clarification needed" in ins.lower()
+            )
+            is_off = (
+                message.get("intent") == "OFF_TOPIC" 
+                or message.get("off_topic") 
+                or "doesn't look like a data analysis" in ins.lower()
+            )
+            is_meta = message.get("intent") == "META_QUESTIONS"
+
+            if is_clarification:
+                st.warning(ins)
+            elif is_off:
+                st.warning(f"⚠️ {ins}")
+            elif is_meta:
+                st.info(ins)
+            else:
+                st.info(f"📊 **Executive Findings (Stakeholder Summary):**\n\n{ins}")
             
-        # Display Plotly figure if it exists
-        if "plotly_figure" in message and message["plotly_figure"]:
+        # Display Plotly figure if it exists and visualization was requested
+        needs_viz = message.get("needs_visualization", True)
+        if needs_viz and "plotly_figure" in message and message["plotly_figure"]:
             try:
                 fig = pio.from_json(message["plotly_figure"])
+                if hasattr(fig, "update_layout"):
+                    fig.update_layout(autosize=True, height=520, margin=dict(l=40, r=40, t=50, b=50))
+                if hasattr(fig, "update_yaxes"):
+                    fig.update_yaxes(scaleanchor=None, constrain=None)
+                if hasattr(fig, "update_xaxes"):
+                    fig.update_xaxes(constrain=None)
                 st.plotly_chart(fig, width='stretch', key=f"plotly_{idx}")
             except Exception as e:
                 st.error(f"Failed to render interactive chart: {e}")
 
         # Display static matplotlib/seaborn image fallback
-        elif "figure" in message and message["figure"]:
+        elif needs_viz and "figure" in message and message["figure"]:
             img_data = message["figure"].split(",")[1]
-            st.image(base64.b64decode(img_data), width="stretch")
+            st.image(base64.b64decode(img_data), width='stretch')
             
         # Display code snippet and dataset info in columns
         row1_col1, row1_col2 = st.columns(2)
@@ -601,7 +648,7 @@ for idx, message in enumerate(st.session_state.messages):
             with row1_col1.expander("📝 View Analysis Code"):
                 st.code(message["code"], language="python")
                 
-        if "dataset_info" in message and message["dataset_info"]:
+        if "dataset_info" in message and message["dataset_info"] and not message.get("off_topic") and message.get("intent") != "OFF_TOPIC":
             with row1_col2.expander("📊 View Dataset Metadata"):
                 st.text(message["dataset_info"])
 
@@ -707,38 +754,59 @@ if prompt := st.chat_input(prompt_placeholder):
                         
                         if res.status_code == 200:
                             data = res.json()
+                            is_off_topic = data.get("off_topic", False) or data.get("intent") == "OFF_TOPIC"
                             
-                            # Only show "Analysis Completed" if it actually did data execution (i.e., not a purely conversational chat)
-                            if data.get("code") or data.get("figure") or data.get("plotly_figure"):
+                            # Only show "Analysis Completed" if it actually executed code or charts
+                            if (data.get("code") or data.get("figure") or data.get("plotly_figure")) and not is_off_topic:
                                 st.markdown(f"**Analysis Completed** `({round(end_time - start_time, 2)}s)`")
                             
                             insights = data.get("insights", "")
+                            is_clarification = (
+                                data.get("intent") == "CLARIFICATION"
+                                or data.get("needs_clarification")
+                                or "clarification needed" in insights.lower()
+                            )
+                            is_meta = data.get("intent") == "META_QUESTIONS"
+
                             if insights:
                                 # Streaming-style rendering of insight text for better UX
                                 insight_placeholder = st.empty()
                                 streamed = ""
                                 for ch in insights:
                                     streamed += ch
-                                    insight_placeholder.info(f"✨ **Key Insight:** \n{streamed}")
+                                    if is_clarification:
+                                        insight_placeholder.warning(f"{streamed}")
+                                    elif is_off_topic or "doesn't look like a data analysis" in insights.lower():
+                                        insight_placeholder.warning(f"⚠️ {streamed}")
+                                    elif is_meta:
+                                        insight_placeholder.info(f"{streamed}")
+                                    else:
+                                        insight_placeholder.info(f"📊 **Executive Findings (Stakeholder Summary):**\n\n{streamed}")
                                     time.sleep(0.01)
                                 
-                            # Try parsing plotly figure first
-                            plotly_fig = data.get("plotly_figure")
-                            figure = data.get("figure")
+                            needs_viz = data.get("needs_visualization", True)
+                            plotly_fig = data.get("plotly_figure") if (needs_viz and not is_off_topic and not is_clarification) else None
+                            figure = data.get("figure") if (needs_viz and not is_off_topic and not is_clarification) else None
                             
                             if plotly_fig:
                                 try:
                                     fig = pio.from_json(plotly_fig)
+                                    if hasattr(fig, "update_layout"):
+                                        fig.update_layout(autosize=True, height=520, margin=dict(l=40, r=40, t=50, b=50))
+                                    if hasattr(fig, "update_yaxes"):
+                                        fig.update_yaxes(scaleanchor=None, constrain=None)
+                                    if hasattr(fig, "update_xaxes"):
+                                        fig.update_xaxes(constrain=None)
                                     st.plotly_chart(fig, width='stretch', key=f"plotly_new_{len(st.session_state.messages)}")   
                                 except Exception as e:
                                     st.error(f"Failed to render interactive chart: {e}")
                             # Fallback to static matplotlib
                             elif figure:
                                 img_data = figure.split(",")[1]
-                                st.image(base64.b64decode(img_data), width="stretch")
+                                st.image(base64.b64decode(img_data), width='stretch')
 
-                            gen_code = data.get("code", "")
-                            dataset_info = data.get("dataset_info_snippet", "")
+                            gen_code = data.get("code", "") if (not is_off_topic and not is_clarification) else ""
+                            dataset_info = data.get("dataset_info_snippet", "") if not is_off_topic else ""
                             
                             c1, c2 = st.columns(2)
                             if gen_code:
@@ -749,14 +817,20 @@ if prompt := st.chat_input(prompt_placeholder):
                                     st.text(dataset_info)
                                 
                             # Save to history
+                            completed_tag = f"**Analysis Completed** `({round(end_time - start_time, 2)}s)`" if (gen_code or figure or plotly_fig) else ""
                             st.session_state.messages.append({
                                 "role": "assistant",
-                                "content": f"**Analysis Completed** `({round(end_time - start_time, 2)}s)`",
+                                "content": completed_tag,
                                 "insights": insights,
                                 "code": gen_code,
                                 "dataset_info": dataset_info,
                                 "figure": figure,
-                                "plotly_figure": plotly_fig
+                                "plotly_figure": plotly_fig,
+                                "needs_visualization": needs_viz,
+                                "intent": data.get("intent", ""),
+                                "needs_clarification": is_clarification,
+                                "suggested_questions": data.get("suggested_questions", []),
+                                "off_topic": is_off_topic,
                             })
                         else:
                             err_msg = f"API Error: {res.text}"

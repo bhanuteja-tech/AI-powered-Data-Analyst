@@ -45,7 +45,7 @@ def _convert_data_types(df: pd.DataFrame, report: Dict[str, Any]) -> pd.DataFram
                 continue
 
             before = str(df[col].dtype)
-            converted = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True)
+            converted = pd.to_datetime(df[col], errors="coerce")
             # Only adopt conversion if we get a reasonable fraction of non-null datetimes
             if converted.notna().mean() >= 0.6:
                 df[col] = converted

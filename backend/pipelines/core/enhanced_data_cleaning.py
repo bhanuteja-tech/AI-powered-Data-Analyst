@@ -84,17 +84,19 @@ class EnhancedDataCleaner:
             
             # Numeric detection
             if pd.api.types.is_numeric_dtype(series):
-                # Check if it's actually categorical (like IDs stored as numbers)
-                unique_ratio = series.nunique() / len(series.dropna())
-                if unique_ratio > 0.5 and series.nunique() > 10:
-                    # Likely numeric, but could be ID-like
-                    if any(keyword in str(col).lower() for keyword in ['id', 'code', 'number']):
-                        column_types["mixed"].append(col)
-                    else:
-                        column_types["numeric"].append(col)
-                else:
-                    # Low cardinality numeric - likely categorical
+                nunique = series.nunique(dropna=True)
+                total = len(series.dropna())
+                # Pure binary numeric (0/1) or boolean-like
+                if nunique <= 2:
+                    column_types["boolean" if pd.api.types.is_bool_dtype(series) else "categorical"].append(col)
+                # Obvious ID column (e.g. user_id, order_id with high-uniqueness integers)
+                elif any(keyword in str(col).lower() for keyword in ['id', 'code', 'guid', 'uuid']) and (nunique / max(total, 1) > 0.8):
+                    column_types["mixed"].append(col)
+                # Very low cardinality discrete integer codes (e.g. status code 1..4)
+                elif nunique <= 5 and total >= 50 and pd.api.types.is_integer_dtype(series):
                     column_types["categorical"].append(col)
+                else:
+                    column_types["numeric"].append(col)
                 continue
             
             # Datetime detection
@@ -210,20 +212,15 @@ class EnhancedDataCleaner:
         """Enhanced boolean conversion with comprehensive patterns."""
         conversions = {}
         
-        # Extended boolean mappings
+        # Standard and robust boolean mappings (strict binary pairs)
         boolean_mappings = {
-            # Standard
             'true': True, 'false': False, 'yes': True, 'no': False,
             'y': True, 'n': False, 't': True, 'f': False,
             '1': True, '0': False,
-            # Extended
             'active': True, 'inactive': False, 'enabled': True, 'disabled': False,
-            'on': True, 'off': False, 'up': True, 'down': False,
-            'male': True, 'female': False, 'pass': True, 'fail': False,
+            'on': True, 'off': False, 'pass': True, 'fail': False,
             'success': True, 'failure': False, 'approved': True, 'rejected': False,
             'complete': True, 'incomplete': False, 'valid': True, 'invalid': False,
-            'agree': True, 'disagree': False, 'accept': True, 'decline': False,
-            'high': True, 'low': False, 'positive': True, 'negative': False,
         }
         
         for col in df.columns:
@@ -236,43 +233,32 @@ class EnhancedDataCleaner:
             
             unique_vals = set(sample.unique())
             
-            # Check if values match our boolean patterns
-            matched_vals = {val for val in unique_vals if val in boolean_mappings}
+            # A true boolean column has at most 2 distinct non-null unique values
+            if len(unique_vals) > 2 or len(unique_vals) == 0:
+                continue
             
-            # Also check for partial matches (e.g., "TRUE", "False ")
-            partial_matches = {val for val in unique_vals 
-                             if any(val.startswith(key) or val.endswith(key) for key in boolean_mappings.keys())}
+            # All non-null values must strictly match boolean tokens
+            if not unique_vals.issubset(boolean_mappings.keys()):
+                continue
             
-            total_matches = len(matched_vals.union(partial_matches))
+            # If there are 2 values, verify they map to distinct booleans (e.g. True and False)
+            mapped_bools = {boolean_mappings[v] for v in unique_vals}
+            if len(unique_vals) == 2 and len(mapped_bools) != 2:
+                continue
             
-            if total_matches / len(unique_vals) >= 0.8:  # 80% threshold
-                try:
-                    # Create mapping with partial matches
-                    enhanced_mapping = boolean_mappings.copy()
-                    for val in unique_vals:
-                        val_lower = val.lower()
-                        if val_lower not in enhanced_mapping:
-                            # Check for partial matches
-                            for key, bool_val in boolean_mappings.items():
-                                if val_lower.startswith(key) or val_lower.endswith(key):
-                                    enhanced_mapping[val_lower] = bool_val
-                                    break
-                    
-                    converted = sample.map(enhanced_mapping)
-                    success_rate = converted.notna().mean()
-                    
-                    if success_rate >= 0.8:
-                        before_dtype = str(df[col].dtype)
-                        df[col] = converted.astype('boolean')
-                        conversions[col] = {
-                            'from': before_dtype,
-                            'to': 'boolean',
-                            'unique_values': list(unique_vals),
-                            'success_rate': success_rate
-                        }
-                
-                except Exception as e:
-                    logger.warning(f"Failed to convert {col} to boolean: {e}")
+            try:
+                before_dtype = str(df[col].dtype)
+                converted = df[col].astype(str).str.strip().str.lower().map(boolean_mappings)
+                converted[df[col].isna()] = pd.NA
+                df[col] = converted.astype('boolean')
+                conversions[col] = {
+                    'from': before_dtype,
+                    'to': 'boolean',
+                    'unique_values': list(unique_vals),
+                    'success_rate': 1.0
+                }
+            except Exception as e:
+                logger.warning(f"Failed to convert {col} to boolean: {e}")
         
         report['boolean_conversions'] = conversions
         return df
@@ -298,11 +284,10 @@ class EnhancedDataCleaner:
             '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%SZ',
         ]
         
-        # Enhanced column name detection
+        # Specific datetime keywords
         datetime_keywords = [
             'date', 'time', 'year', 'month', 'day', 'created', 'updated', 'modified',
-            'timestamp', 'expiry', 'start', 'end', 'due', 'birth', 'join', 'access',
-            'last', 'first', 'at', 'on', 'from', 'to'
+            'timestamp', 'expiry', 'deadline', 'birth', 'dob'
         ]
         
         for col in df.columns:
@@ -318,41 +303,53 @@ class EnhancedDataCleaner:
             if sample.empty:
                 continue
             
+            # Quick filter: if name doesn't match and values have no digits or date separators, skip
+            if not name_match:
+                has_date_pattern = sample.str.contains(r'\d+[/\-:]\d+|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b', case=False, regex=True).any()
+                if not has_date_pattern:
+                    continue
+            
             best_format = None
             best_success_rate = 0
             
-            # Try each format
-            for fmt in datetime_formats:
-                try:
-                    test_converted = pd.to_datetime(sample, format=fmt, errors='coerce')
-                    success_rate = test_converted.notna().mean()
-                    
-                    if success_rate > best_success_rate:
-                        best_success_rate = success_rate
-                        best_format = fmt
-                except:
-                    continue
-            
-            # Also try auto-detection
-            try:
-                auto_converted = pd.to_datetime(sample, errors='coerce', infer_datetime_format=True)
-                auto_success_rate = auto_converted.notna().mean()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                # Try each explicit format first
+                for fmt in datetime_formats:
+                    try:
+                        test_converted = pd.to_datetime(sample, format=fmt, errors='coerce')
+                        success_rate = test_converted.notna().mean()
+                        
+                        if success_rate > best_success_rate:
+                            best_success_rate = success_rate
+                            best_format = fmt
+                            if success_rate >= 0.95:
+                                break
+                    except Exception:
+                        continue
                 
-                if auto_success_rate > best_success_rate:
-                    best_success_rate = auto_success_rate
-                    best_format = 'auto'
-            except:
-                pass
+                # If no explicit format was high-confidence, try general parse
+                if best_success_rate < 0.6:
+                    try:
+                        auto_converted = pd.to_datetime(sample, errors='coerce')
+                        auto_success_rate = auto_converted.notna().mean()
+                        if auto_success_rate > best_success_rate:
+                            best_success_rate = auto_success_rate
+                            best_format = 'auto'
+                    except Exception:
+                        pass
             
             # Decide if conversion is worthwhile
-            threshold = 0.6 if name_match else 0.8  # Lower threshold if name suggests datetime
+            threshold = 0.6 if name_match else 0.8
             
             if best_success_rate >= threshold:
                 try:
-                    if best_format == 'auto':
-                        converted = pd.to_datetime(df[col], errors='coerce', infer_datetime_format=True)
-                    else:
-                        converted = pd.to_datetime(df[col], format=best_format, errors='coerce')
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        if best_format == 'auto':
+                            converted = pd.to_datetime(df[col], errors='coerce')
+                        else:
+                            converted = pd.to_datetime(df[col], format=best_format, errors='coerce')
                     
                     final_success_rate = converted.notna().mean()
                     
@@ -579,7 +576,14 @@ class EnhancedDataCleaner:
             if col not in df.columns:
                 continue
             
-            if pd.api.types.is_numeric_dtype(df[col]):
+            if pd.api.types.is_bool_dtype(df[col]) or str(df[col].dtype) in ('bool', 'boolean'):
+                # Boolean imputation using mode (or False if all null)
+                mode_vals = df[col].dropna().mode()
+                fill_value = bool(mode_vals.iloc[0]) if not mode_vals.empty else False
+                df[col] = df[col].fillna(fill_value)
+                handling_info[col] = {'method': 'mode (boolean)', 'value': fill_value}
+            
+            elif pd.api.types.is_numeric_dtype(df[col]):
                 # Advanced numeric imputation
                 series = df[col].dropna()
                 if not series.empty:
@@ -602,7 +606,7 @@ class EnhancedDataCleaner:
                 # Datetime imputation
                 if df[col].notna().any():
                     # Use forward fill, then backward fill, then mode
-                    df[col] = df[col].fillna(method='ffill').fillna(method='bfill')
+                    df[col] = df[col].ffill().bfill()
                     if df[col].isna().any():
                         mode_val = df[col].mode()
                         if not mode_val.empty:
@@ -680,13 +684,21 @@ class EnhancedDataCleaner:
     def _get_outlier_mask(self, df: pd.DataFrame, col: str, method: str, results: Dict[str, Any]) -> pd.Series:
         """Helper to get outlier mask for a specific method."""
         series = pd.to_numeric(df[col], errors='coerce')
+        full_mask = pd.Series(False, index=series.index)
         
+        def _get_zscore_mask() -> pd.Series:
+            z_mask = pd.Series(False, index=series.index)
+            clean = series.dropna()
+            if len(clean) > 2 and clean.std() > 0:
+                z_scores = np.abs(stats.zscore(clean))
+                z_mask.loc[clean.index] = z_scores > results.get('zscore', {}).get('threshold', 3.0)
+            return z_mask
+
         if method == 'iqr' and 'iqr' in results:
             bounds = results['iqr']['bounds']
             return (series < bounds[0]) | (series > bounds[1])
         elif method == 'zscore' and 'zscore' in results:
-            z_scores = np.abs(stats.zscore(series.dropna()))
-            return z_scores > results['zscore']['threshold']
+            return _get_zscore_mask()
         elif method == 'consensus' and 'consensus' in results:
             # Reconstruct consensus mask
             outlier_masks = []
@@ -694,17 +706,24 @@ class EnhancedDataCleaner:
                 bounds = results['iqr']['bounds']
                 outlier_masks.append((series < bounds[0]) | (series > bounds[1]))
             if 'zscore' in results:
-                z_scores = np.abs(stats.zscore(series.dropna()))
-                outlier_masks.append(z_scores > results['zscore']['threshold'])
+                outlier_masks.append(_get_zscore_mask())
             if 'isolation_forest' in results:
-                iso_forest = IsolationForest(contamination=0.1, random_state=42)
-                outlier_labels = iso_forest.fit_predict(series.values.reshape(-1, 1))
-                outlier_masks.append(outlier_labels == -1)
+                iso_mask = pd.Series(False, index=series.index)
+                clean = series.dropna()
+                if len(clean) > 30:
+                    try:
+                        iso_forest = IsolationForest(contamination=0.1, random_state=42)
+                        labels = iso_forest.fit_predict(clean.values.reshape(-1, 1))
+                        iso_mask.loc[clean.index] = (labels == -1)
+                    except Exception:
+                        pass
+                outlier_masks.append(iso_mask)
             
             if outlier_masks:
-                return pd.Series(np.sum(outlier_masks, axis=0) >= 2, index=series.index)
+                summed = sum(m.astype(int) for m in outlier_masks)
+                return summed >= 2
         
-        return pd.Series(False, index=series.index)
+        return full_mask
 
     def _enhanced_duplicate_detection(self, df: pd.DataFrame, report: Dict[str, Any]) -> pd.DataFrame:
         """Enhanced duplicate detection with fuzzy matching options."""
@@ -815,6 +834,7 @@ class EnhancedDataCleaner:
         
         original_shape = df.shape
         report['original_shape'] = original_shape
+        df = df.copy()
         
         # Step 1: Enhanced column type identification
         column_types = self._identify_column_types_enhanced(df)

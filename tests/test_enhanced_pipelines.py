@@ -3,6 +3,15 @@ Test script to demonstrate enhanced preprocessing and cleaning capabilities.
 This script creates realistic messy datasets and shows how the enhanced pipelines handle them.
 """
 
+import sys
+from pathlib import Path
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 import pandas as pd
 import numpy as np
 import json
@@ -56,7 +65,7 @@ def create_messy_dataset_1():
         
         # Outliers
         'Normal_Num': np.random.normal(50, 10, n),
-        'With_Outliers': np.concatenate([np.random.normal(50, 10, 950), [1000, -500, 2000, -1000, 1500]]),
+        'With_Outliers': np.concatenate([np.random.normal(50, 10, 995), [1000, -500, 2000, -1000, 1500]]),
         
         # Constant column (should be dropped)
         'Constant_Col': ['SAME_VALUE'] * n,
@@ -65,6 +74,7 @@ def create_messy_dataset_1():
         'Mixed_Col': ['123', '456', 'ABC', '789', 'XYZ'] * 200
     }
     
+    data = {k: list(v)[:n] for k, v in data.items()}
     df = pd.DataFrame(data)
     
     # Add some missing values randomly
@@ -108,6 +118,7 @@ def create_messy_dataset_2():
         'Label': ['Yes', 'No', 'Yes', 'No', 'Maybe'] * 100  # Includes a third category
     }
     
+    data = {k: list(v)[:n] for k, v in data.items()}
     df = pd.DataFrame(data)
     
     # Add missing values

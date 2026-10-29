@@ -57,9 +57,9 @@ _BOOLEAN_PATTERNS = {
     "true": True, "false": False, "yes": True, "no": False,
     "y": True, "n": False, "t": True, "f": False, "1": True, "0": False,
     "active": True, "inactive": False, "enabled": True, "disabled": False,
-    "on": True, "off": False, "up": True, "down": False,
-    "male": True, "female": False, "pass": True, "fail": False,
+    "on": True, "off": False, "pass": True, "fail": False,
     "success": True, "failure": False, "approved": True, "rejected": False,
+    "complete": True, "incomplete": False, "valid": True, "invalid": False,
 }
 
 
@@ -183,22 +183,28 @@ class EnhancedPreprocessor:
                 continue
             
             unique_vals = set(sample_series.unique())
-            # Check if values match our boolean patterns
-            matched_vals = {val for val in unique_vals if val in _BOOLEAN_PATTERNS}
+            # A boolean column can have at most 2 distinct non-null values
+            if len(unique_vals) > 2 or len(unique_vals) == 0:
+                continue
             
-            if len(matched_vals) / len(unique_vals) >= 0.8:  # 80% match threshold
-                before = str(df[col].dtype)
-                try:
-                    converted = sample_series.map(_BOOLEAN_PATTERNS)
-                    # Check conversion quality
-                    non_null_ratio = converted.notna().mean()
-                    if non_null_ratio >= 0.8:
-                        df[col] = converted.astype("boolean")
-                        after = str(df[col].dtype)
-                        dtype_changes[col] = f"{before} -> {after}"
-                        bool_like_columns.append(col)
-                except Exception as e:
-                    logger.warning(f"Failed to convert {col} to boolean: {e}")
+            # Check if all unique values match boolean patterns
+            if not unique_vals.issubset(_BOOLEAN_PATTERNS.keys()):
+                continue
+            
+            mapped_bools = {_BOOLEAN_PATTERNS[v] for v in unique_vals}
+            if len(unique_vals) == 2 and len(mapped_bools) != 2:
+                continue
+            
+            before = str(df[col].dtype)
+            try:
+                converted = df[col].astype(str).str.strip().str.lower().map(_BOOLEAN_PATTERNS)
+                converted[df[col].isna()] = pd.NA
+                df[col] = converted.astype("boolean")
+                after = str(df[col].dtype)
+                dtype_changes[col] = f"{before} -> {after}"
+                bool_like_columns.append(col)
+            except Exception as e:
+                logger.warning(f"Failed to convert {col} to boolean: {e}")
         
         report["enhanced_boolean_conversions"] = dtype_changes
         report["boolean_like_columns"] = bool_like_columns
@@ -216,49 +222,56 @@ class EnhancedPreprocessor:
             col_lower = str(col).lower()
             datetime_keywords = [
                 "date", "time", "year", "month", "day", "created", "updated",
-                "timestamp", "modified", "expiry", "start", "end", "due"
+                "timestamp", "modified", "expiry", "start", "end", "due", "dob"
             ]
             
-            if not any(kw in col_lower for kw in datetime_keywords):
+            name_match = any(kw in col_lower for kw in datetime_keywords)
+            if not name_match:
                 continue
             
-            # Try multiple datetime formats
+            # Sample for fast testing
             sample = df[col].dropna().astype(str).head(50)
             if sample.empty:
                 continue
             
             # Common datetime formats to try
             datetime_formats = [
-                None,  # Auto-detect
                 "%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y",
                 "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S",
                 "%m/%d/%Y", "%d-%b-%Y", "%Y%m%d",
+                None,  # Auto-detect fallback
             ]
             
             best_format = None
             best_success_rate = 0
             
-            for fmt in datetime_formats:
-                try:
-                    if fmt is None:
-                        converted = pd.to_datetime(df[col], errors='coerce', infer_datetime_format=True)
-                    else:
-                        converted = pd.to_datetime(df[col], format=fmt, errors='coerce')
-                    
-                    success_rate = converted.notna().mean()
-                    if success_rate > best_success_rate:
-                        best_success_rate = success_rate
-                        best_format = fmt
-                except:
-                    continue
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                for fmt in datetime_formats:
+                    try:
+                        if fmt is None:
+                            converted_sample = pd.to_datetime(sample, errors='coerce')
+                        else:
+                            converted_sample = pd.to_datetime(sample, format=fmt, errors='coerce')
+                        
+                        success_rate = converted_sample.notna().mean()
+                        if success_rate > best_success_rate:
+                            best_success_rate = success_rate
+                            best_format = fmt
+                            if success_rate >= 0.95:
+                                break
+                    except Exception:
+                        continue
             
             if best_success_rate >= 0.6:  # 60% success threshold
                 before = str(df[col].dtype)
                 try:
-                    if best_format is None:
-                        converted = pd.to_datetime(df[col], errors='coerce', infer_datetime_format=True)
-                    else:
-                        converted = pd.to_datetime(df[col], format=best_format, errors='coerce')
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        if best_format is None:
+                            converted = pd.to_datetime(df[col], errors='coerce')
+                        else:
+                            converted = pd.to_datetime(df[col], format=best_format, errors='coerce')
                     
                     df[col] = converted
                     after = str(df[col].dtype)
@@ -290,7 +303,7 @@ class EnhancedPreprocessor:
                 # Remove encoding issues and normalize
                 df[col] = (
                     df[col]
-                    .str.encode('ascii', errors='ignore').decode('ascii')  # Remove non-ASCII
+                    .str.encode('ascii', errors='ignore').str.decode('ascii')  # Remove non-ASCII
                     .str.strip()
                     .str.replace(r'\s+', ' ', regex=True)  # Normalize whitespace
                     .str.replace(r'[^\w\s]', '', regex=True)  # Remove special chars except spaces

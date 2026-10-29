@@ -118,12 +118,14 @@ def _convert_boolean_like_columns(df: pd.DataFrame, report: Dict[str, Any]) -> N
             continue
 
         unique_vals = set(sample_series.unique().tolist())
+        if len(unique_vals) > 2 or len(unique_vals) == 0:
+            continue
         known = set(mapping.keys())
         if not unique_vals.issubset(known):
-            # if it's mostly boolean-like, we still convert
-            ratio = sample_series.map(lambda x: x in known).mean()
-            if ratio < 0.9:
-                continue
+            continue
+        mapped_bools = {mapping[v] for v in unique_vals}
+        if len(unique_vals) == 2 and len(mapped_bools) != 2:
+            continue
 
         before = str(df[col].dtype)
         converted = df[col].astype(str).str.strip().str.lower().map(mapping)
@@ -152,7 +154,7 @@ def _convert_datetime_columns(df: pd.DataFrame, report: Dict[str, Any]) -> None:
         if not any(kw in lower_name for kw in ["date", "time", "year", "month", "day"]):
             continue
 
-        converted = pd.to_datetime(df[col], errors="coerce", infer_datetime_format=True)
+        converted = pd.to_datetime(df[col], errors="coerce")
         non_null_ratio = converted.notna().mean() if len(converted) else 0
         if non_null_ratio >= 0.6:
             before = str(df[col].dtype)
@@ -421,15 +423,11 @@ def preprocess_dataset(df: pd.DataFrame) -> Dict[str, Any]:
     # Boolean -> 0/1
     bool_cols = [c for c in X.columns if X[c].dtype in ["bool", "boolean"] or pd.api.types.is_bool_dtype(X[c])]
     for col in bool_cols:
-        # ===== BOOLEAN → INT (FIX) =====
-        bool_cols = [c for c in X.columns if str(X[c].dtype) in ["bool", "boolean"]]
-
-        for col in bool_cols:
-            X[col] = X[col].astype(int)
+        X[col] = X[col].astype(int)
     model_report["boolean_converted_columns"] = bool_cols
 
     # Identify remaining types
-    categorical_cols = [c for c in X.columns if X[c].dtype == "object" or pd.api.types.is_categorical_dtype(X[c])]
+    categorical_cols = [c for c in X.columns if X[c].dtype == "object" or isinstance(X[c].dtype, pd.CategoricalDtype)]
     numeric_cols = [c for c in X.columns if pd.api.types.is_numeric_dtype(X[c])]
 
     # Encode categoricals
